@@ -1,0 +1,13 @@
+{
+  "exp": 1793621705887,
+  "proposals": [
+    {"arr": "2026-11-07T18:56", "count": 36, "dep": "2026-11-07T17:00", "dest": "LYON PART DIEU", "num": "6687", "orig": "PARIS - GARE DE LYON - HALL 1 & 2", "space": "ASSIS", "type": "INOUI"},
+    {"arr": "2026-11-07T18:56", "count": 35, "dep": "2026-11-07T17:00", "dest": "LYON PART DIEU", "num": "6623", "orig": "PARIS - GARE DE LYON - HALL 1 & 2", "space": "ASSIS", "type": "INOUI"},
+    {"arr": "2026-11-07T19:54", "count": 63, "dep": "2026-11-07T17:52", "dest": "LYON PART DIEU", "num": "6627", "orig": "PARIS - GARE DE LYON - HALL 1 & 2", "space": "ASSIS", "type": "INOUI"},
+    {"arr": "2026-11-07T20:56", "count": 28, "dep": "2026-11-07T19:00", "dest": "LYON PART DIEU", "num": "6689", "orig": "PARIS - GARE DE LYON - HALL 1 & 2", "space": "ASSIS", "type": "INOUI"},
+    {"arr": "2026-11-07T20:56", "count": 31, "dep": "2026-11-07T19:00", "dest": "LYON PART DIEU", "num": "6629", "orig": "PARIS - GARE DE LYON - HALL 1 & 2", "space": "ASSIS", "type": "INOUI"},
+    {"arr": "2026-11-07T21:22", "count": 1, "dep": "2026-11-07T19:26", "dest": "LYON PART DIEU", "num": "7805", "orig": "PARIS - GARE DE LYON - HALL 1 & 2", "space": "ASSIS", "type": "OUIGO"}
+  ],
+  "ratio": 0.18,
+  "updated": 1793621405887
+}

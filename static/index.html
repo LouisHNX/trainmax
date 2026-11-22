@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TGVmax Alert</title>
+<style>
+  :root { --bg:#f6f7f9; --card:#fff; --fg:#14171c; --mute:#586070; --on-accent:#fff; --line:#e3e6ea; --accent:#0b5fff; --err:#c0262d; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#0f1115; --card:#181b21; --fg:#e8eaee; --mute:#98a0ad; --on-accent:#0f1115; --line:#2a2f38; --accent:#6ea0ff; --err:#ff7b80; }
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display:none !important; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:16px/1.4 system-ui, sans-serif; }
+  main { max-width:640px; margin:0 auto; padding:24px 16px 48px; }
+  h1 { font-size:1.4rem; margin:0 0 16px; }
+  section { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:16px; margin-bottom:16px; }
+  h2 { font-size:1rem; margin:0 0 12px; }
+  form { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+  label { display:flex; flex-direction:column; gap:4px; font-size:.85rem; color:var(--mute); }
+  .wide { grid-column:1 / -1; }
+  input, select, button { font:inherit; padding:10px; border:1px solid var(--line); border-radius:8px; background:var(--bg); color:var(--fg); }
+  button { background:var(--accent); color:var(--on-accent); border:0; cursor:pointer; }
+  button.del { background:none; color:var(--err); padding:6px 10px; border:1px solid var(--line); }
+  ul { list-style:none; margin:0; padding:0; }
+  li { display:flex; justify-content:space-between; align-items:center; gap:12px; padding:10px 0; border-top:1px solid var(--line); }
+  li:first-child { border-top:0; }
+  .empty, #msg { color:var(--mute); }
+  #msg.err { color:var(--err); }
+</style>
+</head>
+<body>
+<main>
+  <h1>🚄 TGVmax Alert</h1>
+  <section>
+    <h2>Ajouter une route</h2>
+    <form id="add">
+      <label>Départ <input name="origin" list="st" required placeholder="paris"></label>
+      <label>Arrivée <input name="dest" list="st" required placeholder="lyon"></label>
+      <label class="wide">Quand
+        <select name="mode"><option value="date">Une date ou une période</option><option value="week">Chaque semaine</option></select>
+      </label>
+      <label data-mode="date">Du <input type="date" name="from"></label>
+      <label data-mode="date">Au (optionnel) <input type="date" name="to"></label>
+      <label data-mode="week" hidden class="wide">Jour
+        <select name="weekday"><option>lundi</option><option>mardi</option><option>mercredi</option><option>jeudi</option><option>vendredi</option><option>samedi</option><option>dimanche</option></select>
+      </label>
+      <label>Heure min (optionnel) <input type="time" name="t1"></label>
+      <label>Heure max (optionnel) <input type="time" name="t2"></label>
+      <button class="wide">Ajouter</button>
+    </form>
+    <datalist id="st"></datalist>
+    <p id="msg"></p>
+  </section>
+  <section>
+    <h2>Routes surveillées</h2>
+    <ul id="routes"></ul>
+  </section>
+</main>
+<script>
+const $ = s => document.querySelector(s), form = $('#add'), msg = $('#msg');
+
+function say(text, err) { msg.textContent = text; msg.className = err ? 'err' : ''; }
+
+async function load() {
+  const r = await fetch('/api/routes');
+  const { routes, stations } = await r.json();
+  $('#st').replaceChildren(...stations.map(s => Object.assign(document.createElement('option'), { value: s })));
+  const ul = $('#routes');
+  if (!routes.length) { ul.innerHTML = '<li class="empty">Aucune route surveillée.</li>'; return; }
+  ul.replaceChildren(...routes.map(x => {
+    const li = document.createElement('li'), span = document.createElement('span'), b = document.createElement('button');
+    span.textContent = x.label;
+    b.textContent = 'Supprimer'; b.className = 'del';
+    b.onclick = () => send(`/del ${x.id}`);
+    li.append(span, b);
+    return li;
+  }));
+}
+
+async function send(text) {
+  const r = await fetch('/api/command', { method: 'POST', body: JSON.stringify({ text }) });
+  const j = await r.json();
+  say(j.error || j.reply, !r.ok);
+  if (r.ok) load();
+  return r.ok;
+}
+
+form.mode.onchange = () => form.querySelectorAll('[data-mode]').forEach(l => l.hidden = l.dataset.mode !== form.mode.value);
+
+form.onsubmit = async e => {
+  e.preventDefault();
+  const f = form, week = f.mode.value === 'week';
+  if (!week && !f.from.value) return say('Choisis une date.', true);
+  if (!!f.t1.value !== !!f.t2.value) return say('Donne les deux heures, ou aucune.', true);
+  const when = week ? f.weekday.value : f.from.value + (f.to.value ? '-' + f.to.value : '');
+  const slot = f.t1.value ? ` ${f.t1.value}-${f.t2.value}` : '';
+  if (await send(`/add ${f.origin.value.trim()} ${f.dest.value.trim()} ${when}${slot}`)) f.reset();
+};
+load();
+</script>
+</body>
+</html>
