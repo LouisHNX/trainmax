@@ -1,7 +1,7 @@
 import unittest
 from datetime import date
 
-from telegram import CommandError, parse_command, split_text
+from commands import CommandError, parse_command
 
 TODAY = date(2026, 11, 2)
 
@@ -70,12 +70,6 @@ class ParseCommandTests(unittest.TestCase):
     def test_del(self):
         c = parse_command("/del 3", TODAY)
         self.assertEqual((c.name, c.route_id), ("del", 3))
-
-    def test_split_text(self):
-        text = "\n".join(["x" * 50] * 100)
-        chunks = split_text(text, limit=500)
-        self.assertTrue(all(len(c) <= 500 for c in chunks))
-        self.assertEqual("\n".join(chunks), text)
 
 
 if __name__ == "__main__":

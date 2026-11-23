@@ -1,4 +1,4 @@
-"""Web frontend: manage watched routes in a browser, and run the seat check every 6 h.
+"""Web frontend: manage watched routes, read the alerts, and run the seat check every 6 h.
 
 One Railway service owns the SQLite volume, so the check runs here (as run.py in a
 subprocess) instead of in a separate cron service.
@@ -20,11 +20,17 @@ from pathlib import Path
 import db
 from run import apply_command, now_paris
 from stations import STATIONS
-from telegram import CommandError, parse_command
+from commands import CommandError, parse_command
 
 log = logging.getLogger("web")
 INDEX = Path(__file__).with_name("static").joinpath("index.html")
 CHECK_HOURS = 6  # UTC 00/06/12/18, like the old cron; the noon run sends the day-before reminder
+CHECK_LOCK = threading.Lock()  # a manual check and the scheduled one must not write the DB at once
+
+
+def run_check(*args: str) -> None:
+    with CHECK_LOCK:
+        subprocess.run([sys.executable, "run.py", *args], check=False)  # logs and exit code go to Railway
 
 
 def checker() -> None:
@@ -33,7 +39,7 @@ def checker() -> None:
         nxt = now.replace(minute=0, second=0, microsecond=0)
         nxt += timedelta(hours=CHECK_HOURS - nxt.hour % CHECK_HOURS)
         time.sleep((nxt - now).total_seconds())
-        subprocess.run([sys.executable, "run.py"], check=False)  # logs and exit code go to Railway
+        run_check()
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -71,11 +77,22 @@ class Handler(BaseHTTPRequestHandler):
             finally:
                 conn.close()
             return self._json(200, {"routes": routes, "stations": sorted(STATIONS)})
+        if self.path == "/api/messages":
+            conn = db.connect()
+            try:
+                return self._json(200, {"messages": db.list_messages(conn), "checking": CHECK_LOCK.locked()})
+            finally:
+                conn.close()
         self._send(404, b"")
 
     def do_POST(self):
         if not self._authed():
             return self._send(401, b"")
+        if self.path == "/api/check":
+            if CHECK_LOCK.locked():
+                return self._json(409, {"error": "Vérification déjà en cours."})
+            threading.Thread(target=run_check, args=("--now",), daemon=True).start()
+            return self._json(202, {"reply": "Vérification lancée, résultat ici dans une minute ou deux."})
         if self.path != "/api/command":
             return self._send(404, b"")
         try:

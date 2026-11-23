@@ -1,60 +1,10 @@
-"""Minimal Telegram Bot API client + command parser (httpx only)."""
-import logging
+"""Command parser for the web form (/add, /del, ...)."""
 import re
 from dataclasses import dataclass
-from datetime import date, datetime
-
-import httpx
+from datetime import date
 
 from models import RECURRING_END, WEEKDAYS
 from stations import STATIONS, is_known
-
-log = logging.getLogger(__name__)
-MAX_LEN = 4000  # Telegram limit is 4096 chars per message
-
-
-class TelegramError(Exception):
-    pass
-
-
-class TelegramClient:
-    def __init__(self, token: str, client: httpx.Client | None = None):
-        self._base = f"https://api.telegram.org/bot{token}"
-        self._client = client or httpx.Client(timeout=httpx.Timeout(15.0, connect=10.0))
-
-    def _call(self, method: str, payload: dict):
-        try:
-            r = self._client.post(f"{self._base}/{method}", json=payload)
-            data = r.json()
-        except (httpx.HTTPError, ValueError) as e:
-            # Do not chain/print the exception: its text contains the URL, i.e. the token.
-            raise TelegramError(f"{method} failed: {type(e).__name__}") from None
-        if not data.get("ok"):
-            raise TelegramError(f"{method} refused: {data.get('description', r.status_code)}")
-        return data["result"]
-
-    def get_updates(self, offset: int = 0) -> list[dict]:
-        payload = {"timeout": 0, "allowed_updates": ["message"]}
-        if offset:
-            payload["offset"] = offset
-        return self._call("getUpdates", payload)
-
-    def send_message(self, chat_id, text: str) -> None:
-        for chunk in split_text(text):
-            self._call("sendMessage", {"chat_id": chat_id, "text": chunk,
-                                       "disable_web_page_preview": True})
-
-
-def split_text(text: str, limit: int = MAX_LEN) -> list[str]:
-    chunks, cur = [], ""
-    for line in text.split("\n"):
-        if cur and len(cur) + len(line) + 1 > limit:
-            chunks.append(cur)
-            cur = ""
-        cur = f"{cur}\n{line}" if cur else line
-    if cur:
-        chunks.append(cur)
-    return chunks or [""]
 
 
 # --- commands --------------------------------------------------------------
@@ -164,7 +114,7 @@ def _station_id(name: str) -> str:
 
 
 def parse_command(text: str, today: date | None = None) -> Command | None:
-    """Parse a Telegram message. Returns None if it is not a command.
+    """Parse a command. Returns None if it is not a command.
 
     Raises CommandError (with a user-facing message) for bad input.
     """

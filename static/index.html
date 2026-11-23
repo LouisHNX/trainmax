@@ -21,17 +21,30 @@
   .wide { grid-column:1 / -1; }
   input, select, button { font:inherit; padding:10px; border:1px solid var(--line); border-radius:8px; background:var(--bg); color:var(--fg); }
   button { background:var(--accent); color:var(--on-accent); border:0; cursor:pointer; }
+  button:disabled { opacity:.5; cursor:default; }
   button.del { background:none; color:var(--err); padding:6px 10px; border:1px solid var(--line); }
   ul { list-style:none; margin:0; padding:0; }
   li { display:flex; justify-content:space-between; align-items:center; gap:12px; padding:10px 0; border-top:1px solid var(--line); }
   li:first-child { border-top:0; }
   .empty, #msg { color:var(--mute); }
-  #msg.err { color:var(--err); }
+  #msg.err, #cmsg.err { color:var(--err); }
+  .head { display:flex; justify-content:space-between; align-items:center; gap:12px; margin-bottom:12px; }
+  .head h2 { margin:0; }
+  #alerts li { display:block; }
+  #alerts time { display:block; font-size:.8rem; color:var(--mute); margin-bottom:4px; }
+  #alerts p { margin:0; white-space:pre-wrap; overflow-wrap:anywhere; }
+  #alerts a { color:var(--accent); }
+  #cmsg { color:var(--mute); margin:0 0 8px; }
 </style>
 </head>
 <body>
 <main>
   <h1>🚄 TGVmax Alert</h1>
+  <section>
+    <div class="head"><h2>Alertes</h2><button id="check">Vérifier maintenant</button></div>
+    <p id="cmsg" hidden></p>
+    <ul id="alerts"></ul>
+  </section>
   <section>
     <h2>Ajouter une route</h2>
     <form id="add">
@@ -86,6 +99,37 @@ async function send(text) {
   return r.ok;
 }
 
+// URLs in a message become links; everything else stays plain text.
+function linkify(text) {
+  return text.split(/(https?:\/\/\S+)/).map((part, i) => i % 2
+    ? Object.assign(document.createElement('a'), { href: part, textContent: part, target: '_blank', rel: 'noopener' })
+    : document.createTextNode(part));
+}
+
+let poll;
+async function loadAlerts() {
+  const { messages, checking } = await (await fetch('/api/messages')).json();
+  const ul = $('#alerts');
+  if (!messages.length) ul.innerHTML = '<li class="empty">Aucune alerte pour l\'instant. Les vérifications tournent toutes les 6 h.</li>';
+  else ul.replaceChildren(...messages.map(m => {
+    const li = document.createElement('li'), t = document.createElement('time'), p = document.createElement('p');
+    t.dateTime = m.created_at;
+    t.textContent = new Date(m.created_at).toLocaleString('fr-FR', { dateStyle: 'full', timeStyle: 'short' });
+    p.append(...linkify(m.text));
+    li.append(t, p);
+    return li;
+  }));
+  $('#check').disabled = checking;
+  if (poll && !checking) { clearInterval(poll); poll = null; $('#cmsg').hidden = true; }
+}
+
+$('#check').onclick = async () => {
+  const r = await fetch('/api/check', { method: 'POST' }), j = await r.json(), c = $('#cmsg');
+  c.hidden = false; c.textContent = j.error || j.reply; c.className = r.ok ? '' : 'err';
+  $('#check').disabled = true;
+  if (!poll) poll = setInterval(loadAlerts, 5000);
+};
+
 form.mode.onchange = () => form.querySelectorAll('[data-mode]').forEach(l => l.hidden = l.dataset.mode !== form.mode.value);
 
 form.onsubmit = async e => {
@@ -98,6 +142,7 @@ form.onsubmit = async e => {
   if (await send(`/add ${f.origin.value.trim()} ${f.dest.value.trim()} ${when}${slot}`)) f.reset();
 };
 load();
+loadAlerts().then(() => { if ($('#check').disabled) poll = setInterval(loadAlerts, 5000); });
 </script>
 </body>
 </html>

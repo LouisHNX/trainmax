@@ -42,11 +42,12 @@ class DbTests(unittest.TestCase):
     def setUp(self):
         self.conn = db.connect(":memory:")
 
-    def test_offset(self):
-        self.assertEqual(db.get_offset(self.conn), 0)
-        db.set_offset(self.conn, 42)
-        db.set_offset(self.conn, 43)
-        self.assertEqual(db.get_offset(self.conn), 43)
+    def test_messages_newest_first_and_pruned(self):
+        for i in range(db.KEEP_MESSAGES + 5):
+            db.add_message(self.conn, f"m{i}")
+        msgs = db.list_messages(self.conn, limit=1000)
+        self.assertEqual(len(msgs), db.KEEP_MESSAGES)
+        self.assertEqual(msgs[0]["text"], f"m{db.KEEP_MESSAGES + 4}")
 
     def test_routes_crud(self):
         r = db.add_route(self.conn, "paris", "lyon", "2026-11-15", "2026-11-16", "08:00", "12:00")

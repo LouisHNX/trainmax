@@ -1,4 +1,4 @@
-"""SQLite state: Telegram offset, watched routes, already-notified trains."""
+"""SQLite state: watched routes, already-notified trains, messages shown on the web page."""
 import os
 import sqlite3
 
@@ -24,7 +24,13 @@ CREATE TABLE IF NOT EXISTS notified (
     train_no TEXT NOT NULL,
     PRIMARY KEY (route_id, date, train_no)
 );
+CREATE TABLE IF NOT EXISTS messages (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    text       TEXT NOT NULL
+);
 """
+KEEP_MESSAGES = 200
 
 
 def db_path() -> str:
@@ -45,21 +51,20 @@ def connect(path: str | None = None) -> sqlite3.Connection:
     return conn
 
 
-# --- Telegram offset -------------------------------------------------------
+# --- messages --------------------------------------------------------------
 
-def get_offset(conn: sqlite3.Connection) -> int:
-    row = conn.execute("SELECT value FROM meta WHERE key='offset'").fetchone()
-    return int(row[0]) if row else 0
-
-
-def set_offset(conn: sqlite3.Connection, offset: int) -> None:
+def add_message(conn: sqlite3.Connection, text: str) -> None:
     with conn:
-        conn.execute(
-            "INSERT INTO meta(key, value) VALUES('offset', ?) "
-            "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-            (str(offset),),
-        )
+        cur = conn.execute("INSERT INTO messages(text) VALUES(?)", (text,))
+        conn.execute("DELETE FROM messages WHERE id <= ?", (cur.lastrowid - KEEP_MESSAGES,))
 
+
+def list_messages(conn: sqlite3.Connection, limit: int = 50) -> list[dict]:
+    rows = conn.execute("SELECT id, created_at, text FROM messages ORDER BY id DESC LIMIT ?", (limit,))
+    return [{"id": i, "created_at": c, "text": t} for i, c, t in rows]
+
+
+# --- reminder --------------------------------------------------------------
 
 def get_reminder_day(conn: sqlite3.Connection) -> str | None:
     row = conn.execute("SELECT value FROM meta WHERE key='reminder_day'").fetchone()

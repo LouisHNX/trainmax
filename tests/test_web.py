@@ -42,6 +42,15 @@ class WebTest(unittest.TestCase):
         self.assertEqual(call(self.port, "POST", "/api/command", {"text": f"/del {routes[0]['id']}"})[0], 200)
         self.assertEqual(json.loads(call(self.port, "GET", "/api/routes")[1])["routes"], [])
 
+    def test_messages_and_busy_check(self):
+        conn = web.db.connect()
+        web.db.add_message(conn, "🚄 hello")
+        conn.close()
+        body = json.loads(call(self.port, "GET", "/api/messages")[1])
+        self.assertEqual([m["text"] for m in body["messages"]], ["🚄 hello"])
+        with web.CHECK_LOCK:  # a check already running: no second one
+            self.assertEqual(call(self.port, "POST", "/api/check")[0], 409)
+
     def test_bad_and_forbidden_commands(self):
         self.assertEqual(call(self.port, "POST", "/api/command", {"text": "/add xx yy 15/11"})[0], 400)
         self.assertEqual(call(self.port, "POST", "/api/command", {"text": "/now"})[0], 400)

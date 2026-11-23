@@ -1,22 +1,19 @@
-"""MAX JEUNE seat alert: one run = read Telegram commands, check routes, alert, exit."""
+"""MAX JEUNE seat alert: one run = check routes, post new seats to the web page, exit."""
 import argparse
 import logging
-import os
 import signal
 import sys
-import time
 from datetime import date, datetime, timedelta, timezone
 
 import db
+from commands import HELP, Command
 from models import Route, SourceError, Train, format_day
 from stations import route_station
-from telegram import HELP, Command, CommandError, TelegramClient, TelegramError, parse_command
 
 log = logging.getLogger("run")
 
 WATCHDOG_SECONDS = 600
 PLANNER_PAGE = "https://www.maxjeune-tgvinoui.sncf/sncf-connect/max-planner"
-REMINDER_RETRY_SECONDS = 10
 REMINDER_HOURS = range(12, 17)  # Paris time: the noon UTC run, before the 17:00 confirmation deadline
 
 
@@ -94,25 +91,15 @@ def format_reminder(routes: list[Route], day: date) -> str:
     return "\n".join(lines)
 
 
-def send_reminder(conn, tg, chat_id: str, today: date, hour: int) -> None:
+def send_reminder(conn, post, today: date, hour: int) -> None:
     """At most one message a day, listing the routes that have a trip tomorrow."""
     if hour not in REMINDER_HOURS or db.get_reminder_day(conn) == today.isoformat():
         return
     tomorrow = today + timedelta(days=1)
     routes = [r for r in db.list_routes(conn) if r.covers(tomorrow.isoformat())]
-    if not routes:
-        return
-    text = format_reminder(routes, tomorrow)
-    for attempt in range(2):  # the next run is after the deadline, so retry a network blip now
-        try:
-            tg.send_message(chat_id, text)
-        except TelegramError as e:
-            log.error("telegram reminder failed: %s", e)
-            if attempt == 0:
-                time.sleep(REMINDER_RETRY_SECONDS)
-            continue
+    if routes:
+        post(format_reminder(routes, tomorrow))
         db.set_reminder_day(conn, today.isoformat())
-        return
 
 
 # --- commands --------------------------------------------------------------
@@ -136,39 +123,6 @@ def apply_command(conn, cmd: Command) -> tuple[str, bool]:
                          cmd.time_from, cmd.time_to, cmd.weekday)
         return f"Route ajoutée : {r.label()}", False
     return HELP, False
-
-
-def process_updates(conn, tg, chat_id: str, today: date) -> bool:
-    """Fetch and apply pending commands. Returns True if /now was requested."""
-    want_now = False
-    try:
-        updates = tg.get_updates(db.get_offset(conn))
-    except TelegramError as e:
-        log.error("telegram getUpdates failed: %s", e)
-        return False
-    last_id = None
-    for u in updates:
-        last_id = u["update_id"]
-        msg = u.get("message") or {}
-        if str((msg.get("chat") or {}).get("id")) != str(chat_id):
-            log.info("ignoring update %s from another chat", last_id)
-            continue
-        text = msg.get("text") or ""
-        try:
-            cmd = parse_command(text, today)
-            if cmd is None:
-                continue
-            reply, now = apply_command(conn, cmd)
-            want_now = want_now or now
-        except CommandError as e:
-            reply = str(e)
-        try:
-            tg.send_message(chat_id, reply)
-        except TelegramError as e:
-            log.error("telegram reply failed: %s", e)
-    if last_id is not None:
-        db.set_offset(conn, last_id + 1)
-    return want_now
 
 
 # --- checking routes -------------------------------------------------------
@@ -202,15 +156,15 @@ def check_route(route: Route, sources, down: set[str]) -> list[Train] | None:
     return None
 
 
-def run(conn, tg, chat_id: str, sources, today: date, persist: bool = True,
-        process_commands: bool = True, hour: int | None = None) -> int:
-    want_now = process_commands and process_updates(conn, tg, chat_id, today)
+def run(conn, post, sources, today: date, persist: bool = True,
+        want_now: bool = False, hour: int | None = None) -> None:
+    """`post(text)` publishes one message; want_now lists every seat, not only the new ones."""
     if persist:
         purged = db.purge_expired(conn, today.isoformat())
         if purged:
             log.info("purged expired routes: %s", purged)
         if hour is not None:
-            send_reminder(conn, tg, chat_id, today, hour)
+            send_reminder(conn, post, today, hour)
 
     down: set[str] = set()
     groups, failed, current = [], [], {}
@@ -234,53 +188,28 @@ def run(conn, tg, chat_id: str, sources, today: date, persist: bool = True,
 
     if text:
         text += "\n\n" + format_recap(routes, {rid: len(k) for rid, k in current.items()})
-        try:
-            tg.send_message(chat_id, text)
-        except TelegramError as e:
-            log.error("telegram send failed, will retry next run: %s", e)
-            return 1  # notified untouched, so the trains are re-alerted next time
+        post(text)
 
     if persist:
         for rid, keys in current.items():
             db.replace_notified(conn, rid, keys)
-    return 0
 
 
 # --- entry point -----------------------------------------------------------
 
-class PrintClient:
-    """Dry-run stand-in for Telegram: no network, prints messages."""
-
-    def get_updates(self, offset=0):
-        return []
-
-    def send_message(self, chat_id, text):
-        print("--- message (dry-run) ---")
-        print(text)
-        print("-------------------------")
-
-
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--dry-run", action="store_true",
-                    help="print instead of sending; no Telegram calls, state is not modified")
+                    help="print instead of posting; state is not modified")
+    ap.add_argument("--now", action="store_true", help="post every available seat, not only the new ones")
     args = ap.parse_args(argv)
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
-    logging.getLogger("httpx").setLevel(logging.WARNING)  # its URLs contain the bot token
+    logging.getLogger("httpx").setLevel(logging.WARNING)  # one line per request is noise
 
     if hasattr(signal, "SIGALRM"):
         signal.signal(signal.SIGALRM, lambda *_: sys.exit("watchdog: run took too long"))
         signal.alarm(WATCHDOG_SECONDS)
-
-    if args.dry_run:
-        tg, chat_id = PrintClient(), os.environ.get("ALLOWED_CHAT_ID", "")
-    else:
-        token, chat_id = os.environ.get("TELEGRAM_BOT_TOKEN"), os.environ.get("ALLOWED_CHAT_ID")
-        if not token or not chat_id:
-            print("TELEGRAM_BOT_TOKEN and ALLOWED_CHAT_ID must be set", file=sys.stderr)
-            return 2
-        tg = TelegramClient(token)
 
     from sources import opendata, planner
     sources = [("planner", planner.fetch_available), ("opendata", opendata.fetch_available)]
@@ -288,8 +217,9 @@ def main(argv=None) -> int:
     conn = db.connect()
     try:
         now = now_paris()
-        return run(conn, tg, chat_id, sources, now.date(),
-                   persist=not args.dry_run, process_commands=not args.dry_run, hour=now.hour)
+        post = print if args.dry_run else (lambda text: db.add_message(conn, text))
+        run(conn, post, sources, now.date(), persist=not args.dry_run, want_now=args.now, hour=now.hour)
+        return 0
     finally:
         conn.close()
 
